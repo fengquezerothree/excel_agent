@@ -30,7 +30,7 @@ async def advanced_excel_agent():
     
     # 1. 设置 MCP 服务器
     mcp_server = MCPServerStreamableHttp(
-        params={"url": "http://localhost:8007/mcp"},
+        params={"url": "http://10.180.39.254:8007/mcp"},
         cache_tools_list=True
     )
     

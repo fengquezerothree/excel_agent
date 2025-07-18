@@ -182,7 +182,7 @@ async def main():
     client = MultiServerMCPClient({
         "excel": {
             "transport": "streamable_http",
-            "url": "http://localhost:8007/mcp",
+            "url": "http://10.180.39.254:8007/mcp",
         }
     })
     
