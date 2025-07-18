@@ -8,7 +8,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from langchain_core.tools import BaseTool
 from langgraph.graph import StateGraph, END
-from langgraph.prebuilt import ToolExecutor
+from langgraph.prebuilt import ToolNode
 
 
 class AgentState(TypedDict):
@@ -40,7 +40,7 @@ class ExcelWorkflowAgent:
     def __init__(self, llm: ChatOpenAI, tools: List[BaseTool]):
         self.llm = llm
         self.tools = tools
-        self.tool_executor = ToolExecutor(tools)
+        self.tool_node = ToolNode(tools)
         self.workflow = self._create_workflow()
     
     def _create_workflow(self) -> StateGraph:
@@ -110,26 +110,15 @@ class ExcelWorkflowAgent:
     def _action_node(self, state: AgentState) -> Dict[str, Any]:
         """执行工具调用"""
         last_message = state["messages"][-1]
-        tool_calls = last_message.tool_calls
         
-        tool_messages = []
-        for tool_call in tool_calls:
-            print(f"🛠️ 执行工具: {tool_call['name']}")
-            print(f"📝 参数: {tool_call['args']}")
-            
-            # 执行工具
-            tool_result = self.tool_executor.invoke(tool_call)
-            
-            # 创建工具消息
-            tool_message = ToolMessage(
-                content=str(tool_result),
-                tool_call_id=tool_call["id"]
-            )
-            tool_messages.append(tool_message)
-            
-            print(f"✅ 工具执行完成")
+        print(f"🛠️ 执行工具调用，共 {len(last_message.tool_calls)} 个工具")
         
-        return {"messages": state["messages"] + tool_messages}
+        # 使用 ToolNode 执行工具调用
+        tool_result = self.tool_node.invoke(state)
+        
+        print(f"✅ 工具执行完成")
+        
+        return tool_result
     
     def _finish_node(self, state: AgentState) -> Dict[str, Any]:
         """完成节点"""
