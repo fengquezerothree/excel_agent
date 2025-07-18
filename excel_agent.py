@@ -1,6 +1,8 @@
-from agents import set_default_openai_api, set_default_openai_client, Runner
+from agents import set_default_openai_api, set_default_openai_client, Runner, set_tracing_disabled
 from openai import OpenAI, AsyncOpenAI
 
+# ③ 禁用 OpenAI Agents SDK 的 trace 功能，避免 API 密钥警告
+set_tracing_disabled(True)
 
 # ① 先把默认 API 切成 chat_completions
 set_default_openai_api("chat_completions")   # ★ 关键修复
