@@ -1,19 +1,20 @@
 # excel_agent_with_custom_workflow.py
 import asyncio
-from typing import TypedDict, List, Dict, Any
+from typing import TypedDict, List, Dict, Any, Union
 from openai import OpenAI
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.tools import load_mcp_tools
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, BaseMessage
 from langchain_core.tools import BaseTool
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
+from pydantic import SecretStr
 
 
 class AgentState(TypedDict):
     """代理状态定义"""
-    messages: List[Any]
+    messages: List[BaseMessage]
     iteration_count: int
     max_iterations: int
 
@@ -41,7 +42,7 @@ class ExcelWorkflowAgent:
         self.tool_node = ToolNode(tools)
         self.workflow = self._create_workflow()
     
-    def _create_workflow(self) -> StateGraph:
+    def _create_workflow(self):
         """创建工作流程图"""
         workflow = StateGraph(AgentState)
         
@@ -69,7 +70,7 @@ class ExcelWorkflowAgent:
         
         return workflow.compile()
     
-    def _agent_node(self, state: AgentState) -> Dict[str, Any]:
+    async def _agent_node(self, state: AgentState) -> AgentState:
         """代理节点：决定下一步行动"""
         print(f"🤖 代理思考中... (第 {state['iteration_count'] + 1} 次迭代)")
         
@@ -88,54 +89,89 @@ class ExcelWorkflowAgent:
         messages = [HumanMessage(content=system_prompt)] + state["messages"]
         
         # 调用LLM
-        response = self.llm.bind_tools(self.tools).invoke(messages)
+        response = await self.llm.bind_tools(self.tools).ainvoke(messages)
         
-        # 添加调试信息
-        print(f"🔍 LLM响应类型: {type(response)}")
-        print(f"🔍 响应内容: {response.content[:200]}...")
-        if hasattr(response, 'tool_calls'):
-            print(f"🔍 工具调用数量: {len(response.tool_calls) if response.tool_calls else 0}")
-            if response.tool_calls:
-                for i, tool_call in enumerate(response.tool_calls):
-                    print(f"🔍 工具调用 {i+1}: {tool_call}")
+        # 打印完整的模型响应
+        print("\n" + "="*50)
+        print("🧠 模型响应内容:")
+        print("="*50)
+        print(response.content)
+        print("="*50)
+        
+        # 安全检查tool_calls属性
+        tool_calls = getattr(response, 'tool_calls', None)
+        if tool_calls:
+            print(f"🔧 检测到 {len(tool_calls)} 个工具调用:")
+            for i, tool_call in enumerate(tool_calls):
+                print(f"  📋 工具 {i+1}: {tool_call.get('name', 'unknown')} - {tool_call.get('args', {})}")
+        else:
+            print("✅ 模型没有调用工具，准备完成任务")
         
         # 更新状态
-        new_state = {
+        new_state: AgentState = {
             "messages": state["messages"] + [response],
-            "iteration_count": state["iteration_count"] + 1
+            "iteration_count": state["iteration_count"] + 1,
+            "max_iterations": state["max_iterations"]
         }
-        
-        # 检查是否有工具调用（仅用于日志输出）
-        if hasattr(response, 'tool_calls') and response.tool_calls:
-            print(f"🔧 计划使用工具: {response.tool_calls[0]['name']}")
-        else:
-            print("✅ 代理给出了回答，准备完成")
         
         return new_state
     
-    def _action_node(self, state: AgentState) -> Dict[str, Any]:
+    async def _action_node(self, state: AgentState) -> AgentState:
         """执行工具调用"""
         last_message = state["messages"][-1]
         
-        print(f"🛠️ 执行工具调用，共 {len(last_message.tool_calls)} 个工具")
-        
-        # 使用 ToolNode 执行工具调用
-        tool_result = self.tool_node.invoke(state)
-        
-        print(f"✅ 工具执行完成")
-        
-        return tool_result
+        # 安全检查tool_calls属性
+        tool_calls = getattr(last_message, 'tool_calls', None)
+        if tool_calls:
+            print(f"\n🛠️ 开始执行 {len(tool_calls)} 个工具调用...")
+            
+            # 使用 ToolNode 异步执行工具调用
+            tool_result = await self.tool_node.ainvoke(state)
+            
+            # 只打印工具执行的摘要信息
+            if isinstance(tool_result, dict) and "messages" in tool_result:
+                print(f"✅ 工具执行完成，返回 {len(tool_result['messages'])} 条消息")
+                
+                # 分析工具返回结果的摘要
+                for i, msg in enumerate(tool_result["messages"]):
+                    if hasattr(msg, 'content') and msg.content:
+                        content_length = len(msg.content)
+                        # 如果内容很长，只显示摘要
+                        if content_length > 200:
+                            print(f"  📄 工具消息 {i+1}: {content_length} 字符 (内容较长，已省略详情)")
+                        else:
+                            print(f"  📄 工具消息 {i+1}: {msg.content}")
+                
+                new_state: AgentState = {
+                    "messages": tool_result["messages"],
+                    "iteration_count": state["iteration_count"],
+                    "max_iterations": state["max_iterations"]
+                }
+                return new_state
+            else:
+                # 如果工具执行结果格式不对，保持原状态
+                print("⚠️ 工具执行结果格式异常，保持原状态")
+                return state
+        else:
+            print("❌ 没有找到工具调用")
+            return state
     
-    def _finish_node(self, state: AgentState) -> Dict[str, Any]:
+    async def _finish_node(self, state: AgentState) -> Dict[str, Any]:
         """完成节点"""
-        print("🎉 任务完成！")
+        print("\n🎉 工作流执行完成！")
         
         # 从最后一条AI消息中获取最终答案
         final_answer = "任务已完成"
         if state["messages"]:
-            last_message = state["messages"][-1]
-            if hasattr(last_message, 'content') and last_message.content:
-                final_answer = last_message.content
+            # 从后往前查找最后一条AI消息（不包含工具调用的）
+            for message in reversed(state["messages"]):
+                if (isinstance(message, AIMessage) and 
+                    hasattr(message, 'content') and 
+                    message.content and 
+                    not getattr(message, 'tool_calls', None)):
+                    final_answer = message.content
+                    print(f"✅ 成功提取最终分析报告 ({len(final_answer)} 字符)")
+                    break
         
         return {"final_answer": final_answer}
     
@@ -143,18 +179,19 @@ class ExcelWorkflowAgent:
         """决定是否继续执行"""
         # 检查迭代次数
         if state["iteration_count"] >= state["max_iterations"]:
-            print(f"⚠️ 达到最大迭代次数 ({state['max_iterations']})")
+            print(f"\n⚠️ 达到最大迭代次数 ({state['max_iterations']})，结束工作流")
             return "finish"
         
         # 检查最后一条消息是否包含工具调用
         if state["messages"]:
             last_message = state["messages"][-1]
-            if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
-                print(f"🔍 检测到工具调用，继续执行")
+            tool_calls = getattr(last_message, 'tool_calls', None)
+            if tool_calls:
+                print(f"\n🔄 继续下一步：执行工具调用")
                 return "continue"
         
         # 如果没有工具调用，则完成
-        print(f"🔍 没有工具调用，准备完成")
+        print(f"\n✅ 模型已完成分析，准备结束工作流")
         return "finish"
     
     async def run(self, query: str, max_iterations: int = 10) -> str:
@@ -163,7 +200,7 @@ class ExcelWorkflowAgent:
         print(f"📋 用户查询: {query}\n")
         
         # 初始化状态
-        initial_state = {
+        initial_state: AgentState = {
             "messages": [HumanMessage(content=query)],
             "iteration_count": 0,
             "max_iterations": max_iterations,
@@ -172,7 +209,20 @@ class ExcelWorkflowAgent:
         # 运行工作流
         final_state = await self.workflow.ainvoke(initial_state)
         
-        return final_state.get("final_answer", "工作流执行完成")
+        # 从最终状态中提取最后的AI分析报告
+        final_answer = "工作流执行完成"
+        if "messages" in final_state and final_state["messages"]:
+            # 从后往前查找最后一条AI消息（不包含工具调用的）
+            for message in reversed(final_state["messages"]):
+                if (isinstance(message, AIMessage) and 
+                    hasattr(message, 'content') and 
+                    message.content and 
+                    not getattr(message, 'tool_calls', None)):
+                    final_answer = message.content
+                    print(f"✅ 成功提取最终分析报告 ({len(final_answer)} 字符)")
+                    break
+        
+        return final_answer
 
 
 async def main():
@@ -191,7 +241,7 @@ async def main():
         model_name = get_first_model_name()
         llm = ChatOpenAI(
             base_url="http://10.180.116.5:6390/v1",
-            api_key="dummy",
+            api_key=SecretStr("dummy"),
             model=model_name,
             temperature=0
         )
