@@ -1,5 +1,6 @@
 from agents import set_default_openai_api, set_default_openai_client, Runner, set_tracing_disabled
-from openai import OpenAI, AsyncOpenAI
+from openai import AsyncOpenAI
+from config_loader import get_model_service_config, get_model_name
 
 # ③ 禁用 OpenAI Agents SDK 的 trace 功能，避免 API 密钥警告
 set_tracing_disabled(True)
@@ -7,32 +8,30 @@ set_tracing_disabled(True)
 # ① 先把默认 API 切成 chat_completions
 set_default_openai_api("chat_completions")   # ★ 关键修复
 
-# ② 再注入指向 vLLM 的客户端
-client = AsyncOpenAI(base_url="http://10.180.116.5:6390/v1", api_key="dummy")
+# ② 使用配置加载器获取模型服务配置
+model_config = get_model_service_config()
+client = AsyncOpenAI(
+    base_url=model_config["base_url"], 
+    api_key=model_config["api_key"]
+)
 set_default_openai_client(client)
 
-def get_first_model_name():
-    client = OpenAI(
-        base_url="http://10.180.116.5:6390/v1",
-        api_key="dummy"
-    )
-    models = client.models.list()
-    return models.data[0].id
-
-model = get_first_model_name()
+# 使用配置加载器获取模型名称
+model = get_model_name()
 
 # advanced_usage.py - 带有 MCP 服务器的用法
 import asyncio
-from openai import OpenAI
 from agents import Agent, Runner
 from agents.mcp import MCPServerStreamableHttp
+from config_loader import get_mcp_server_config
 
 async def advanced_excel_agent():
     """使用 MCP 服务器的高级代理示例"""
     
-    # 1. 设置 MCP 服务器
+    # 1. 使用配置加载器设置 MCP 服务器
+    mcp_config = get_mcp_server_config()
     mcp_server = MCPServerStreamableHttp(
-        params={"url": "http://10.180.39.254:8007/mcp"},
+        params={"url": mcp_config["url"]},
         cache_tools_list=True
     )
     

@@ -1,7 +1,6 @@
 # excel_agent_with_custom_workflow.py
 import asyncio
 from typing import TypedDict, List, Dict, Any, Union
-from openai import OpenAI
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.tools import load_mcp_tools
 from langchain_openai import ChatOpenAI
@@ -10,6 +9,7 @@ from langchain_core.tools import BaseTool
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
 from pydantic import SecretStr
+from config_loader import get_model_service_config, get_model_name, get_mcp_client_config, get_agent_config
 
 
 class AgentState(TypedDict):
@@ -17,20 +17,6 @@ class AgentState(TypedDict):
     messages: List[BaseMessage]
     iteration_count: int
     max_iterations: int
-
-
-def get_first_model_name():
-    """获取第一个可用的模型名称"""
-    try:
-        client = OpenAI(
-            base_url="http://10.180.116.5:6390/v1",
-            api_key="dummy"
-        )
-        models = client.models.list()
-        return models.data[0].id
-    except Exception as e:
-        print(f"获取模型名称失败: {e}")
-        raise
 
 
 class ExcelWorkflowAgent:
@@ -75,15 +61,62 @@ class ExcelWorkflowAgent:
         print(f"🤖 代理思考中... (第 {state['iteration_count'] + 1} 次迭代)")
         
         # 构建系统消息
-        system_prompt = """你是一个专业的Excel数据分析师。你的任务是：
-1. 必须首先使用提供的工具读取Excel文件数据
-2. 基于读取的数据进行分析
-3. 提供详细的分析报告
+        system_prompt = """你是一个专业的Excel数据分析师和自动化专家。作为一个高级数据分析代理，你具备以下核心能力和职责：
 
-重要：你必须先调用工具获取数据，然后再进行分析。不要在没有读取数据的情况下给出答案。
+## 核心身份与职责
+你是用户的专业数据分析伙伴，专精于Excel文件的深度分析、数据洞察挖掘和业务价值发现。你的使命是通过精确的数据处理和深入的分析，为用户提供可操作的商业洞察。
 
-可用工具：
-""" + "\n".join([f"- {tool.name}: {tool.description}" for tool in self.tools])
+## 工作原则与方法论
+
+### 数据驱动决策原则
+- 必须基于实际数据进行分析，绝不基于假设或推测
+- 先获取真实数据，再进行分析和结论
+- 每个结论都要有数据支撑，标明数据来源和分析依据
+
+### 工具调用策略
+- 主动使用工具获取所需数据和信息
+- 按逻辑顺序执行工具调用：数据读取 → 数据处理 → 分析计算 → 结果验证
+- 当单个工具无法完成任务时，智能组合多个工具
+- 遇到工具调用失败时，尝试替代方法或调整参数
+- 对于复杂任务，将其分解为多个步骤逐步完成
+
+### 分析深度要求
+- 不仅要描述数据表面现象，更要挖掘深层趋势和模式
+- 识别异常值、数据质量问题和潜在的业务风险
+- 提供前瞻性的洞察和建议
+- 考虑业务上下文，让分析结果具有实际指导意义
+
+## 专业分析框架
+
+### 专业表达标准
+- 使用准确的数据分析术语
+- 避免过于技术化的表述，确保业务人员能理解
+- 结论要明确、具体、可操作
+- 避免冗余信息，聚焦关键洞察
+
+
+## 交互与协作规范
+
+### 主动性原则
+- 主动执行必要的数据获取和分析任务
+- 发现重要问题时主动深入挖掘
+- 不等待用户明确指示就开始基础数据探索
+- 完成主要任务后，主动提供延伸分析建议
+
+### 沟通效率
+- 避免不必要的确认和客套话
+- 直接开始执行用户请求的分析任务
+- 用数据和事实说话，减少主观描述
+- 重要发现优先展示，细节信息按需提供
+
+### 问题处理
+- 遇到模糊请求时，基于常见业务场景进行合理推断
+- 无法获取关键数据时，说明限制并提供替代方案
+- 发现数据异常时，及时指出并分析可能原因
+- 分析结果与预期不符时，提供可能的解释
+
+
+"""
         
         # 构建消息列表
         messages = [HumanMessage(content=system_prompt)] + state["messages"]
@@ -95,15 +128,29 @@ class ExcelWorkflowAgent:
         print("\n" + "="*50)
         print("🧠 模型响应内容:")
         print("="*50)
-        print(response.content)
-        print("="*50)
         
-        # 安全检查tool_calls属性
+        # 检查是否有工具调用
         tool_calls = getattr(response, 'tool_calls', None)
         if tool_calls:
-            print(f"🔧 检测到 {len(tool_calls)} 个工具调用:")
+            print("🔧 模型决定调用工具:")
             for i, tool_call in enumerate(tool_calls):
-                print(f"  📋 工具 {i+1}: {tool_call.get('name', 'unknown')} - {tool_call.get('args', {})}")
+                tool_name = tool_call.get('name', 'unknown')
+                tool_args = tool_call.get('args', {})
+                tool_id = tool_call.get('id', 'no-id')
+                print(f"  {i+1}. 工具名称: {tool_name}")
+                print(f"     工具参数: {tool_args}")
+                print(f"     调用ID: {tool_id}")
+        elif response.content:
+            print("💬 模型文本响应:")
+            print(response.content)
+        else:
+            print("⚠️ 模型响应为空（无内容且无工具调用）")
+        
+        print("="*50)
+        
+        # 检查是否需要继续迭代
+        if tool_calls:
+            print(f"🔄 将执行 {len(tool_calls)} 个工具调用")
         else:
             print("✅ 模型没有调用工具，准备完成任务")
         
@@ -120,10 +167,13 @@ class ExcelWorkflowAgent:
         """执行工具调用"""
         last_message = state["messages"][-1]
         
-        # 安全检查tool_calls属性
+        # 检查工具调用
         tool_calls = getattr(last_message, 'tool_calls', None)
         if tool_calls:
             print(f"\n🛠️ 开始执行 {len(tool_calls)} 个工具调用...")
+            for i, tool_call in enumerate(tool_calls):
+                tool_name = tool_call.get('name', 'unknown')
+                print(f"  📋 执行工具 {i+1}: {tool_name}")
             
             # 使用 ToolNode 异步执行工具调用
             tool_result = await self.tool_node.ainvoke(state)
@@ -187,7 +237,7 @@ class ExcelWorkflowAgent:
             last_message = state["messages"][-1]
             tool_calls = getattr(last_message, 'tool_calls', None)
             if tool_calls:
-                print(f"\n🔄 继续下一步：执行工具调用")
+                print(f"\n🔄 继续下一步：执行 {len(tool_calls)} 个工具调用")
                 return "continue"
         
         # 如果没有工具调用，则完成
@@ -228,22 +278,18 @@ class ExcelWorkflowAgent:
 async def main():
     """主函数：使用自定义工作流的 Excel 代理"""
     
-    # 1. 设置 MCP 客户端
-    client = MultiServerMCPClient({
-        "excel": {
-            "transport": "streamable_http",
-            "url": "http://10.180.39.254:8007/mcp",
-        }
-    })
+    # 1. 使用配置加载器设置 MCP 客户端
+    client = MultiServerMCPClient(get_mcp_client_config())
     
     try:
-        # 2. 获取模型名称并初始化 LLM
-        model_name = get_first_model_name()
+        # 2. 使用配置加载器获取模型配置并初始化 LLM
+        model_config = get_model_service_config()
+        model_name = get_model_name()
         llm = ChatOpenAI(
-            base_url="http://10.180.116.5:6390/v1",
-            api_key=SecretStr("dummy"),
+            base_url=model_config["base_url"],
+            api_key=SecretStr(model_config["api_key"]),
             model=model_name,
-            temperature=0
+            temperature=model_config.get("temperature", 0)
         )
         
         # 3. 使用 session 加载 MCP 工具
@@ -257,11 +303,12 @@ async def main():
             # 5. 执行查询
             input_query = (
                 "读取 20250703it.xlsx 的 Sheet1，前300行 A 到 D 列，"
-                "请分析用户主要关注哪些问题，并给出一份分析报告。"
+                "请分析用户主要关注哪些问题，并给出一份统计分析报告。"
             )
             
-            # 6. 运行工作流并获取结果
-            result = await agent.run(input_query)
+            # 6. 使用配置中的参数运行工作流并获取结果
+            agent_cfg = get_agent_config()
+            result = await agent.run(input_query, max_iterations=agent_cfg.get("max_iterations", 10))
             
             print("\n" + "="*60)
             print("📊 最终分析报告:")

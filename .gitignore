@@ -2,3 +2,4 @@
 .idea/
 **/__pycache__/
 **/*.pyc
+excel_mcp_configs_factory.yaml

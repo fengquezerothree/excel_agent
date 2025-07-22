@@ -1,44 +1,27 @@
 # main_excel_agent_simplified.py
 import asyncio
-from openai import OpenAI
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.tools import load_mcp_tools
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
-
-
-def get_first_model_name():
-    """获取第一个可用的模型名称"""
-    try:
-        client = OpenAI(
-            base_url="http://10.180.116.5:6390/v1",
-            api_key="dummy"
-        )
-        models = client.models.list()
-        return models.data[0].id
-    except Exception as e:
-        print(f"获取模型名称失败: {e}")
-        raise
+from config_loader import get_model_service_config, get_model_name, get_mcp_client_config
 
 
 async def main():
     """主函数：使用 create_react_agent 简化 agent 构建"""
     
-    # 1. 设置 MCP 客户端
-    client = MultiServerMCPClient({
-        "excel": {
-            "transport": "streamable_http",
-            "url": "http://10.180.39.254:8007/mcp",
-        }
-    })
+    # 1. 使用配置加载器设置 MCP 客户端
+    client = MultiServerMCPClient(get_mcp_client_config())
     
     try:
-        # 2. 获取模型名称并初始化 LLM
-        model_name = get_first_model_name()
+        # 2. 使用配置加载器获取模型配置并初始化 LLM
+        model_config = get_model_service_config()
+        model_name = get_model_name()
         llm = ChatOpenAI(
-            base_url="http://10.180.116.5:6390/v1",
-            api_key="dummy",
-            model=model_name
+            base_url=model_config["base_url"],
+            api_key=model_config["api_key"],
+            model=model_name,
+            temperature=model_config.get("temperature", 0)
         )
         
         # 3. 使用 session 加载 MCP 工具
