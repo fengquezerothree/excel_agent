@@ -19,69 +19,38 @@ class ConfigLoader:
             config_file: 用户配置文件路径，默认为 excel_mcp_configs.yaml
         """
         self.config_file = config_file
-        self.factory_file = "excel_mcp_configs_factory.yaml"
         self._config = self._load_config()
     
     def _load_config(self) -> Dict[str, Any]:
         """加载配置文件"""
-        # 优先加载用户配置文件
-        if os.path.exists(self.config_file):
-            with open(self.config_file, 'r', encoding='utf-8') as f:
-                return yaml.safe_load(f)
+        if not os.path.exists(self.config_file):
+            raise FileNotFoundError(f"配置文件 {self.config_file} 不存在，请创建该文件并配置相关参数")
         
-        # 如果用户配置不存在，尝试加载工厂模板
-        elif os.path.exists(self.factory_file):
-            print(f"⚠️ 用户配置文件 {self.config_file} 不存在")
-            print(f"📋 使用工厂模板 {self.factory_file}")
-            print(f"💡 建议复制 {self.factory_file} 为 {self.config_file} 并修改配置")
-            
-            with open(self.factory_file, 'r', encoding='utf-8') as f:
-                return yaml.safe_load(f)
-        
-        # 如果都不存在，使用默认配置
-        else:
-            print(f"⚠️ 配置文件都不存在，使用默认配置")
-            return self._get_default_config()
+        with open(self.config_file, 'r', encoding='utf-8') as f:
+            return yaml.safe_load(f)
     
-    def _get_default_config(self) -> Dict[str, Any]:
-        """获取默认配置"""
-        return {
-            "mcp_server": {
-                "name": "excel",
-                "transport": "streamable_http",
-                "url": "http://10.180.39.254:8007/mcp"
-            },
-            "model_service": {
-                "base_url": "http://10.180.116.5:6390/v1",
-                "api_key": "dummy",
-                "temperature": 0,
-                "auto_get_first_model": True,
-                "model_name": ""
-            },
-            "agent_config": {
-                "max_iterations": 10,
-                "verbose": True
-            }
-        }
+
     
     @property
     def mcp_server_config(self) -> Dict[str, Any]:
         """获取 MCP 服务器配置"""
         return self._config["mcp_server"]
     
-    @property
-    def model_service_config(self) -> Dict[str, Any]:
-        """获取模型服务配置"""
-        return self._config["model_service"]
+    def get_model_service_config(self, model: str) -> Dict[str, Any]:
+        """获取指定模型的服务配置"""
+        model_service = self._config["model_service"]
+        if model not in model_service:
+            raise KeyError(f"模型 '{model}' 不存在于配置中，可用模型: {list(model_service.keys())}")
+        return model_service[model]
     
     @property
     def agent_config(self) -> Dict[str, Any]:
         """获取代理配置"""
         return self._config["agent_config"]
     
-    def get_model_name(self) -> str:
-        """获取模型名称"""
-        model_config = self.model_service_config
+    def get_model_name(self, model: str) -> str:
+        """获取指定模型的名称"""
+        model_config = self.get_model_service_config(model)
         
         # 如果配置中指定了模型名称，直接返回
         if model_config.get("model_name"):
@@ -134,9 +103,9 @@ def get_mcp_server_config() -> Dict[str, Any]:
     return get_config_loader().mcp_server_config
 
 
-def get_model_service_config() -> Dict[str, Any]:
-    """获取模型服务配置"""
-    return get_config_loader().model_service_config
+def get_model_service_config(model: str) -> Dict[str, Any]:
+    """获取指定模型的服务配置"""
+    return get_config_loader().get_model_service_config(model)
 
 
 def get_agent_config() -> Dict[str, Any]:
@@ -144,9 +113,9 @@ def get_agent_config() -> Dict[str, Any]:
     return get_config_loader().agent_config
 
 
-def get_model_name() -> str:
-    """获取模型名称"""
-    return get_config_loader().get_model_name()
+def get_model_name(model: str) -> str:
+    """获取指定模型的名称"""
+    return get_config_loader().get_model_name(model)
 
 
 def get_mcp_client_config() -> Dict[str, Dict[str, Any]]:

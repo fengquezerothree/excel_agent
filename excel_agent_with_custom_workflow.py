@@ -1,20 +1,21 @@
 # excel_agent_with_custom_workflow.py
 import asyncio
-from typing import TypedDict, List, Dict, Any, Union
+from typing import TypedDict, List, Dict, Any, Union, Annotated
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_mcp_adapters.tools import load_mcp_tools
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, BaseMessage
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, BaseMessage, SystemMessage
 from langchain_core.tools import BaseTool
-from langgraph.graph import StateGraph, END
+from langgraph.graph import StateGraph, END, add_messages
 from langgraph.prebuilt import ToolNode
 from pydantic import SecretStr
+from pydantic.type_adapter import P
 from config_loader import get_model_service_config, get_model_name, get_mcp_client_config, get_agent_config
 
 
 class AgentState(TypedDict):
     """代理状态定义"""
-    messages: List[BaseMessage]
+    messages: Annotated[List[BaseMessage], add_messages]
     iteration_count: int
     max_iterations: int
 
@@ -117,46 +118,53 @@ class ExcelWorkflowAgent:
 
 
 """
-        
+        # 历史消息长度
+        print(f"历史消息长度(不包含系统消息)：{len(state['messages'])}")
+
         # 构建消息列表
-        messages = [HumanMessage(content=system_prompt)] + state["messages"]
+        messages = [SystemMessage(content=system_prompt)] + state["messages"]
         
         # 调用LLM
         response = await self.llm.bind_tools(self.tools).ainvoke(messages)
-        
+
+        print("\n┌" + "─"*60 + "┐")
+        print("│" + " "*18 + "📋 模型完整响应" + " "*18 + "│")
+        print("└" + "─"*60 + "┘")
+        print(response)
+
         # 打印完整的模型响应
-        print("\n" + "="*50)
-        print("🧠 模型响应内容:")
-        print("="*50)
+        print("\n╔" + "═"*48 + "╗")
+        print("║" + " "*12 + "🧠 模型响应内容分析" + " "*12 + "║")
+        print("╚" + "═"*48 + "╝")
         
         # 检查是否有工具调用
         tool_calls = getattr(response, 'tool_calls', None)
         if tool_calls:
-            print("🔧 模型决定调用工具:")
+            print("├─ 🔧 模型决定调用工具:")
             for i, tool_call in enumerate(tool_calls):
                 tool_name = tool_call.get('name', 'unknown')
                 tool_args = tool_call.get('args', {})
                 tool_id = tool_call.get('id', 'no-id')
-                print(f"  {i+1}. 工具名称: {tool_name}")
-                print(f"     工具参数: {tool_args}")
-                print(f"     调用ID: {tool_id}")
+                print(f"│  {i+1}. 工具名称: {tool_name}")
+                print(f"│     工具参数: {tool_args}")
+                print(f"│     调用ID: {tool_id}")
         elif response.content:
-            print("💬 模型文本响应:")
-            print(response.content)
+            print("├─ 💬 模型文本响应:")
+            print("│  " + response.content.replace('\n', '\n│  '))
         else:
-            print("⚠️ 模型响应为空（无内容且无工具调用）")
+            print("├─ ⚠️ 模型响应为空（无内容且无工具调用）")
         
-        print("="*50)
+
         
         # 检查是否需要继续迭代
         if tool_calls:
-            print(f"🔄 将执行 {len(tool_calls)} 个工具调用")
+            print(f"└─ 🔄 将执行 {len(tool_calls)} 个工具调用")
         else:
-            print("✅ 模型没有调用工具，准备完成任务")
-        
-        # 更新状态
+            print("└─ ✅ 模型没有调用工具，准备完成任务")
+
+        # 更新状态 - 只返回新消息，框架会自动追加历史消息
         new_state: AgentState = {
-            "messages": state["messages"] + [response],
+            "messages": [response],
             "iteration_count": state["iteration_count"] + 1,
             "max_iterations": state["max_iterations"]
         }
@@ -165,6 +173,11 @@ class ExcelWorkflowAgent:
     
     async def _action_node(self, state: AgentState) -> AgentState:
         """执行工具调用"""
+        # 打印历史消息条数
+        print("\n" + "▼"*30 + " 工具执行区域 " + "▼"*30)
+        print(f"📊 当前历史消息数量: {len(state['messages'])}")
+        print("─"*75)
+
         last_message = state["messages"][-1]
         
         # 检查工具调用
@@ -192,18 +205,23 @@ class ExcelWorkflowAgent:
                         else:
                             print(f"  📄 工具消息 {i+1}: {msg.content}")
                 
+                # 只返回工具执行产生的新消息，框架会自动追加历史消息
                 new_state: AgentState = {
                     "messages": tool_result["messages"],
                     "iteration_count": state["iteration_count"],
                     "max_iterations": state["max_iterations"]
                 }
+                
+                print("▲"*30 + " 工具执行完成 " + "▲"*30)
                 return new_state
             else:
                 # 如果工具执行结果格式不对，保持原状态
                 print("⚠️ 工具执行结果格式异常，保持原状态")
+                print("▲"*30 + " 工具执行异常 " + "▲"*30)
                 return state
         else:
             print("❌ 没有找到工具调用")
+            print("▲"*30 + " 无工具调用 " + "▲"*30)
             return state
     
     async def _finish_node(self, state: AgentState) -> Dict[str, Any]:
@@ -227,9 +245,13 @@ class ExcelWorkflowAgent:
     
     def _should_continue(self, state: AgentState) -> str:
         """决定是否继续执行"""
+        print("\n" + "◆"*25 + " 流程决策点 " + "◆"*25)
+        print("🔍 Agent决定是否继续执行...")
+        
         # 检查迭代次数
         if state["iteration_count"] >= state["max_iterations"]:
-            print(f"\n⚠️ 达到最大迭代次数 ({state['max_iterations']})，结束工作流")
+            print(f"⚠️ 达到最大迭代次数 ({state['max_iterations']})，结束工作流")
+            print("◆"*60)
             return "finish"
         
         # 检查最后一条消息是否包含工具调用
@@ -237,11 +259,13 @@ class ExcelWorkflowAgent:
             last_message = state["messages"][-1]
             tool_calls = getattr(last_message, 'tool_calls', None)
             if tool_calls:
-                print(f"\n🔄 继续下一步：执行 {len(tool_calls)} 个工具调用")
+                print(f"🔄 继续下一步：执行 {len(tool_calls)} 个工具调用")
+                print("◆"*60)
                 return "continue"
         
         # 如果没有工具调用，则完成
-        print(f"\n✅ 模型已完成分析，准备结束工作流")
+        print(f"✅ 模型已完成分析，准备结束工作流")
+        print("◆"*60)
         return "finish"
     
     async def run(self, query: str, max_iterations: int = 10) -> str:
@@ -283,8 +307,10 @@ async def main():
     
     try:
         # 2. 使用配置加载器获取模型配置并初始化 LLM
-        model_config = get_model_service_config()
-        model_name = get_model_name()
+        # 使用默认模型 qwen2.5-32B
+        model_name = "qwen2.5-32B"
+        model_config = get_model_service_config(model_name)
+        model_name = get_model_name(model_name)
         llm = ChatOpenAI(
             base_url=model_config["base_url"],
             api_key=SecretStr(model_config["api_key"]),
@@ -295,7 +321,7 @@ async def main():
         # 3. 使用 session 加载 MCP 工具
         async with client.session("excel") as session:
             tools = await load_mcp_tools(session)
-            print(f"🔧 加载了 {len(tools)} 个工具: {[tool.name for tool in tools]}")
+            print(f"🔧 从Ecel MCP server加载了 {len(tools)} 个工具: {[tool.name for tool in tools]}")
             
             # 4. 创建自定义工作流代理
             agent = ExcelWorkflowAgent(llm, tools)
@@ -310,10 +336,9 @@ async def main():
             agent_cfg = get_agent_config()
             result = await agent.run(input_query, max_iterations=agent_cfg.get("max_iterations", 10))
             
-            print("\n" + "="*60)
-            print("📊 最终分析报告:")
-            print("="*60)
+            print("\n" + "★"*20 + " 最终回答 " + "★"*20)
             print(result)
+            print("★"*60)
     
     except FileNotFoundError as e:
         print(f"❌ 文件未找到: {e}")

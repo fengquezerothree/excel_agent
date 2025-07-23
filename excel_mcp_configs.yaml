@@ -12,16 +12,18 @@ mcp_server:
 
 # 模型服务配置
 model_service:
-  # 模型服务 API 基础 URL
-  base_url: "http://10.180.116.5:6390/v1"
-  # API 密钥（如果不需要认证可设为 dummy）
-  api_key: "dummy"
-  # 模型温度参数（0-1，控制生成的随机性）
-  temperature: 0
-  # 是否自动获取第一个可用模型（true/false）
-  auto_get_first_model: true
-  # 如果不自动获取，可以手动指定模型名称
-  model_name: ""
+  # qwen2.5-32B 模型配置
+  qwen2.5-32B:
+    # 模型服务 API 基础 URL
+    base_url: "http://10.180.116.5:6390/v1"
+    # API 密钥（如果不需要认证可设为 dummy）
+    api_key: "dummy"
+    # 模型温度参数（0-1，控制生成的随机性）
+    temperature: 0
+    # 是否自动获取第一个可用模型（true/false）
+    auto_get_first_model: true
+    # 如果不自动获取，可以手动指定模型名称
+    model_name: ""
 
 # 代理运行配置
 agent_config:
