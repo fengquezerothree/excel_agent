@@ -308,13 +308,13 @@ async def main():
     try:
         # 2. 使用配置加载器获取模型配置并初始化 LLM
         # 使用默认模型 qwen2.5-32B
-        model_name = "qwen2.5-32B"
-        model_config = get_model_service_config(model_name)
-        model_name = get_model_name(model_name)
+        set_model = "qwen2.5-32B"
+        model_config = get_model_service_config(set_model)
+        model = get_model_name(set_model)
         llm = ChatOpenAI(
             base_url=model_config["base_url"],
             api_key=SecretStr(model_config["api_key"]),
-            model=model_name,
+            model=model,
             temperature=model_config.get("temperature", 0)
         )
         
